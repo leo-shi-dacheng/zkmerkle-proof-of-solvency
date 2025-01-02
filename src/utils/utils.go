@@ -23,9 +23,15 @@ import (
 )
 
 // ConvertTierRatiosToBytes 将分层抵押率配置转换为字节数组
+// 每两层抵押率配置打包成一个字节数组，用于优化存储和计算
+// 参数:
+//   - tiersRatio: 分层抵押率配置数组
+//
+// 返回:
+//   - [][]byte: 打包后的字节数组
 func ConvertTierRatiosToBytes(tiersRatio []TierRatio) [][]byte {
 	res := make([][]byte, 0, len(tiersRatio)/2)
-	// 用于计算的临时变量
+	// 临时计算变量
 	resBigInt := new(big.Int).SetUint64(0)
 	aBigInt := new(big.Int).SetUint64(0)
 	bBigInt := new(big.Int).SetUint64(0)
@@ -55,6 +61,12 @@ func ConvertTierRatiosToBytes(tiersRatio []TierRatio) [][]byte {
 }
 
 // ConvertAssetInfoToBytes 将资产信息转换为字节数组
+// 将CexAssetInfo结构体的各个字段打包成字节数组
+// 参数:
+//   - value: 要转换的资产信息(CexAssetInfo类型)
+//
+// 返回:
+//   - [][]byte: 打包后的字节数组
 func ConvertAssetInfoToBytes(value any) [][]byte {
 	switch t := value.(type) {
 	case CexAssetInfo:
@@ -96,6 +108,15 @@ func ConvertAssetInfoToBytes(value any) [][]byte {
 }
 
 // SelectAssetValue 根据资产索引和标志选择对应的资产值
+// 参数:
+//   - expectAssetIndex: 期望的资产索引
+//   - flag: 选择标志(0:权益,1:债务,2:贷款,3:保证金,4:投资组合保证金)
+//   - currentAssetPosition: 当前资产位置
+//   - assets: 资产数组
+//
+// 返回:
+//   - *big.Int: 选择的资产值
+//   - bool: 是否是最后一个标志
 func SelectAssetValue(expectAssetIndex int, flag int, currentAssetPosition int, assets []AccountAsset) (*big.Int, bool) {
 	// 边界检查
 	if currentAssetPosition >= len(assets) {
@@ -123,12 +144,22 @@ func SelectAssetValue(expectAssetIndex int, flag int, currentAssetPosition int, 
 }
 
 // IsAssetEmpty 检查资产是否为空
+// 参数:
+//   - ua: 要检查的账户资产
+//
+// 返回:
+//   - bool: 资产是否为空
 func IsAssetEmpty(ua *AccountAsset) bool {
 	return ua.Debt == 0 && ua.Equity == 0 && ua.Margin == 0 &&
 		ua.PortfolioMargin == 0 && ua.Loan == 0
 }
 
 // GetNonEmptyAssetsCountOfUser 获取用户非空资产数量
+// 参数:
+//   - assets: 用户资产数组
+//
+// 返回:
+//   - int: 用户所属的资产分组大小
 func GetNonEmptyAssetsCountOfUser(assets []AccountAsset) int {
 	count := 0
 	for _, v := range assets {
@@ -145,7 +176,7 @@ func GetNonEmptyAssetsCountOfUser(assets []AccountAsset) int {
 	return 0
 }
 
-// GetAssetsCountOfUser 获取用户资产数量
+// 获取用户资产数量
 func GetAssetsCountOfUser(assets []AccountAsset) int {
 	count := len(assets)
 	targetCounts := 0
@@ -159,6 +190,11 @@ func GetAssetsCountOfUser(assets []AccountAsset) int {
 }
 
 // PaddingAccountAssets 填充账户资产数据到目标长度
+// 参数:
+//   - assets: 原始资产数组
+//
+// 返回:
+//   - []uint64: 填充后的扁平化资产数组
 func PaddingAccountAssets(assets []AccountAsset) (paddingFlattenAssets []uint64) {
 	targetCounts := GetAssetsCountOfUser(assets)
 	if targetCounts < len(assets) {
@@ -202,6 +238,13 @@ func PaddingAccountAssets(assets []AccountAsset) (paddingFlattenAssets []uint64)
 	return paddingFlattenAssets
 }
 
+// ComputeUserAssetsCommitment 计算用户资产的承诺值
+// 参数:
+//   - hasher: 哈希函数实例
+//   - assets: 用户资产数组
+//
+// 返回:
+//   - []byte: 资产承诺值
 func ComputeUserAssetsCommitment(hasher *hash.Hash, assets []AccountAsset) []byte {
 	(*hasher).Reset()
 	paddingFlattenAssets := PaddingAccountAssets(assets)
@@ -237,6 +280,14 @@ func ComputeUserAssetsCommitment(hasher *hash.Hash, assets []AccountAsset) []byt
 	return (*hasher).Sum(nil)
 }
 
+// ParseUserDataSet 解析用户数据集
+// 参数:
+//   - dirname: 用户数据集所在的目录
+//
+// 返回:
+//   - map[int][]AccountInfo: 用户数据集
+//   - []CexAssetInfo: CEX资产信息
+//   - error: 错误信息
 func ParseUserDataSet(dirname string) (map[int][]AccountInfo, []CexAssetInfo, error) {
 	const CEX_ASSET_INFO_FILE string = "cex_assets_info.csv"
 	userFiles, err := os.ReadDir(dirname)
@@ -351,6 +402,7 @@ func SafeAdd(a uint64, b uint64) (c uint64) {
 	return c
 }
 
+// 从用户文件中解析资产索引
 func ParseAssetIndexFromUserFile(userFilename string) ([]string, error) {
 	f, err := os.Open(userFilename)
 	if err != nil {
@@ -373,6 +425,7 @@ func ParseAssetIndexFromUserFile(userFilename string) ([]string, error) {
 	return cexAssetsList, nil
 }
 
+// 填充抵押率配置到目标长度
 func PaddingTierRatios(tiersRatio []TierRatio) (res [TierCount]TierRatio) {
 	if len(tiersRatio) > TierCount {
 		panic("the length of tiers ratio is bigger than TierCount")
@@ -677,6 +730,15 @@ func ReadUserDataFromCsvFile(name string, cexAssetsInfo []CexAssetInfo) (map[int
 	return accounts, invalidCounts, nil
 }
 
+// CalculateAssetValueForCollateral 计算资产的抵押价值
+// 参数:
+//   - loan: 贷款数量
+//   - margin: 保证金数量
+//   - portfolioMargin: 投资组合保证金数量
+//   - cexAssetInfo: 资产信息
+//
+// 返回:
+//   - *big.Int: 计算后的抵押价值
 func CalculateAssetValueForCollateral(loan uint64, margin uint64, portfolioMargin uint64, cexAssetInfo *CexAssetInfo) *big.Int {
 	assetPrice := new(big.Int).SetUint64(cexAssetInfo.BasePrice)
 	loanValue := new(big.Int).SetUint64(loan)
@@ -693,6 +755,13 @@ func CalculateAssetValueForCollateral(loan uint64, margin uint64, portfolioMargi
 	return loanValue.Add(loanValue, marginValue).Add(loanValue, portfolioMarginValue)
 }
 
+// CalculateAssetValueViaTiersRatio 根据分层抵押率计算资产价值
+// 参数:
+//   - collateralValue: 抵押品价值
+//   - tiersRatio: 分层抵押率配置
+//
+// 返回:
+//   - *big.Int: 计算后的资产价值
 func CalculateAssetValueViaTiersRatio(collateralValue *big.Int, tiersRatio []TierRatio) *big.Int {
 	if len(tiersRatio) == 0 {
 		return ZeroBigInt
@@ -773,6 +842,13 @@ func DecodeBatchWitness(data string) *BatchCreateUserWitness {
 	return &witnessForCircuit
 }
 
+// AccountInfoToHash 计算账户信息的哈希值
+// 参数:
+//   - account: 账户信息
+//   - hasher: 哈希函数实例
+//
+// 返回:
+//   - []byte: 账户哈希值
 func AccountInfoToHash(account *AccountInfo, hasher *hash.Hash) []byte {
 	assetCommitment := ComputeUserAssetsCommitment(hasher, account.Assets)
 	(*hasher).Reset()
@@ -781,6 +857,9 @@ func AccountInfoToHash(account *AccountInfo, hasher *hash.Hash) []byte {
 	return accountHash
 }
 
+// RecoverAfterCexAssets 恢复CEX资产状态
+// 参数:
+//   - witness: 见证数据
 func RecoverAfterCexAssets(witness *BatchCreateUserWitness) []CexAssetInfo {
 	cexAssets := witness.BeforeCexAssets
 	for i := 0; i < len(witness.CreateUserOps); i++ {
