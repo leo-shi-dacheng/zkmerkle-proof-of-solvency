@@ -18,41 +18,48 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/poseidon"
-	"github.com/shopspring/decimal"
 	"github.com/klauspost/compress/s2"
+	"github.com/shopspring/decimal"
 )
 
+// ConvertTierRatiosToBytes 将分层抵押率配置转换为字节数组
 func ConvertTierRatiosToBytes(tiersRatio []TierRatio) [][]byte {
 	res := make([][]byte, 0, len(tiersRatio)/2)
+	// 用于计算的临时变量
 	resBigInt := new(big.Int).SetUint64(0)
 	aBigInt := new(big.Int).SetUint64(0)
 	bBigInt := new(big.Int).SetUint64(0)
 	cBigInt := new(big.Int).SetUint64(0)
 	dBigInt := new(big.Int).SetUint64(0)
+
+	// 每两层打包成一个字节数组
 	for i := 0; i < len(tiersRatio); i += 2 {
-		resBigInt.SetUint64(0)
+		// 第一层的处理
 		aBigInt.SetUint64(uint64(tiersRatio[i].Ratio))
 		bBigInt.Set(tiersRatio[i].BoundaryValue)
 		bBigInt.Mul(bBigInt, Uint8MaxValueBigInt)
 		aBigInt.Add(aBigInt, bBigInt)
 
+		// 第二层的处理
 		cBigInt.SetUint64(uint64(tiersRatio[i+1].Ratio))
 		cBigInt.Mul(cBigInt, Uint126MaxValueBigInt)
 		dBigInt.Set(tiersRatio[i+1].BoundaryValue)
 		dBigInt.Mul(dBigInt, Uint134MaxValueBigInt)
 		cBigInt.Add(cBigInt, dBigInt)
 
+		// 合并两层的结果
 		resBigInt.Add(aBigInt, cBigInt)
 		res = append(res, resBigInt.Bytes())
-
 	}
 	return res
 }
 
+// ConvertAssetInfoToBytes 将资产信息转换为字节数组
 func ConvertAssetInfoToBytes(value any) [][]byte {
 	switch t := value.(type) {
 	case CexAssetInfo:
 		res := make([][]byte, 0, 10)
+		// 1. 打包总权益、总债务和基准价格
 		aBigInt := new(big.Int).SetUint64(t.TotalEquity)
 		bBigInt := new(big.Int).SetUint64(t.TotalDebt)
 		cBigInt := new(big.Int).SetUint64(t.BasePrice)
@@ -62,6 +69,7 @@ func ConvertAssetInfoToBytes(value any) [][]byte {
 		resBigInt := new(big.Int).Add(aBigInt, cBigInt)
 		res = append(res, resBigInt.Bytes())
 
+		// 2. 打包三种抵押品数量
 		resBigInt.SetUint64(0)
 		aBigInt.SetUint64(t.LoanCollateral)
 		bBigInt.SetUint64(t.MarginCollateral)
@@ -74,6 +82,7 @@ func ConvertAssetInfoToBytes(value any) [][]byte {
 
 		// one tier ratio: boundaryValue take 118 bits, ratio take 8 bits = 126 bits
 		// so two tier ratio take 252 bits, can be stored in one circuit Variable
+		// 3. 打包三种抵押率配置
 		tempRes := ConvertTierRatiosToBytes(t.LoanRatios[:])
 		res = append(res, tempRes...)
 		tempRes = ConvertTierRatiosToBytes(t.MarginRatios[:])
@@ -86,51 +95,57 @@ func ConvertAssetInfoToBytes(value any) [][]byte {
 	}
 }
 
+// SelectAssetValue 根据资产索引和标志选择对应的资产值
 func SelectAssetValue(expectAssetIndex int, flag int, currentAssetPosition int, assets []AccountAsset) (*big.Int, bool) {
+	// 边界检查
 	if currentAssetPosition >= len(assets) {
 		return ZeroBigInt, false
 	}
+
+	// 索引检查
 	if int(assets[currentAssetPosition].Index) > expectAssetIndex {
 		return ZeroBigInt, false
 	} else {
-		if flag == 0 {
+		// 根据flag返回不同类型的值
+		switch flag {
+		case 0:
 			return new(big.Int).SetUint64(assets[currentAssetPosition].Equity), false
-		} else if flag == 1 {
+		case 1:
 			return new(big.Int).SetUint64(assets[currentAssetPosition].Debt), false
-		} else if flag == 2 {
+		case 2:
 			return new(big.Int).SetUint64(assets[currentAssetPosition].Loan), false
-		} else if flag == 3 {
+		case 3:
 			return new(big.Int).SetUint64(assets[currentAssetPosition].Margin), false
-		} else {
+		default:
 			return new(big.Int).SetUint64(assets[currentAssetPosition].PortfolioMargin), true
 		}
 	}
 }
 
+// IsAssetEmpty 检查资产是否为空
 func IsAssetEmpty(ua *AccountAsset) bool {
-	if ua.Debt == 0 && ua.Equity == 0 && ua.Margin == 0 && ua.PortfolioMargin == 0 && ua.Loan == 0 {
-		return true
-	}
-	return false
+	return ua.Debt == 0 && ua.Equity == 0 && ua.Margin == 0 &&
+		ua.PortfolioMargin == 0 && ua.Loan == 0
 }
 
+// GetNonEmptyAssetsCountOfUser 获取用户非空资产数量
 func GetNonEmptyAssetsCountOfUser(assets []AccountAsset) int {
 	count := 0
-	targetCounts := 0
 	for _, v := range assets {
 		if !IsAssetEmpty(&v) {
 			count += 1
 		}
 	}
+	// 根据资产数量确定目标分组
 	for _, v := range AssetCountsTiers {
 		if count <= v {
-			targetCounts = v
-			break
+			return v
 		}
 	}
-	return targetCounts
+	return 0
 }
 
+// GetAssetsCountOfUser 获取用户资产数量
 func GetAssetsCountOfUser(assets []AccountAsset) int {
 	count := len(assets)
 	targetCounts := 0
@@ -143,6 +158,7 @@ func GetAssetsCountOfUser(assets []AccountAsset) int {
 	return targetCounts
 }
 
+// PaddingAccountAssets 填充账户资产数据到目标长度
 func PaddingAccountAssets(assets []AccountAsset) (paddingFlattenAssets []uint64) {
 	targetCounts := GetAssetsCountOfUser(assets)
 	if targetCounts < len(assets) {
@@ -151,6 +167,8 @@ func PaddingAccountAssets(assets []AccountAsset) (paddingFlattenAssets []uint64)
 	}
 	numOfAssetsFields := 6
 	paddingFlattenAssets = make([]uint64, targetCounts*numOfAssetsFields)
+
+	// 计算需要填充的数量
 	paddingCounts := targetCounts - len(assets)
 	currentPaddingCounts := 0
 	currentAssetIndex := 0
@@ -232,7 +250,7 @@ func ParseUserDataSet(dirname string) (map[int][]AccountInfo, []CexAssetInfo, er
 	userFileNames := make([]string, 0)
 
 	type UserParseRes struct {
-		accounts map[int][]AccountInfo
+		accounts      map[int][]AccountInfo
 		invalidAccNum int
 	}
 	results := make([]chan UserParseRes, workersNum)
@@ -271,7 +289,7 @@ func ParseUserDataSet(dirname string) (map[int][]AccountInfo, []CexAssetInfo, er
 					panic(err.Error())
 				}
 				results[workerId] <- UserParseRes{
-					accounts: tmpAccountInfo,
+					accounts:      tmpAccountInfo,
 					invalidAccNum: invalidAccountNum,
 				}
 			}

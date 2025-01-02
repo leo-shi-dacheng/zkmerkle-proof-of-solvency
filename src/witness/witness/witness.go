@@ -18,23 +18,24 @@ import (
 	"github.com/binance/zkmerkle-proof-of-solvency/src/witness/config"
 	bsmt "github.com/bnb-chain/zkbnb-smt"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fr/poseidon"
+	"github.com/klauspost/compress/s2"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"github.com/klauspost/compress/s2"
 )
 
 type Witness struct {
-	accountTree              bsmt.SparseMerkleTree
-	totalOpsNumber           uint32
-	witnessModel             WitnessModel
-	ops                      map[int][]utils.AccountInfo
-	cexAssets                []utils.CexAssetInfo
-	db                       *gorm.DB
-	ch                       chan BatchWitness
-	quit                     chan int
-	accountHashChan          map[int][]chan []byte
-	currentBatchNumber       int64
+	accountTree        bsmt.SparseMerkleTree       // 账户Merkle树
+	totalOpsNumber     uint32                      // 总操作数
+	witnessModel       WitnessModel                // 数据库模型
+	ops                map[int][]utils.AccountInfo // 用户账户信息
+	cexAssets          []utils.CexAssetInfo        // CEX资产信息
+	db                 *gorm.DB                    // 数据库连接
+	ch                 chan BatchWitness           // 批次见证数据通道
+	quit               chan int                    // 退出信号通道
+	accountHashChan    map[int][]chan []byte       // 账户哈希通道
+	currentBatchNumber int64                       // 当前批次号
+	// 批次号映射
 	batchNumberMappingKeys   []int
 	batchNumberMappingValues []int
 }
@@ -72,7 +73,7 @@ func NewWitness(accountTree bsmt.SparseMerkleTree, totalOpsNumber uint32,
 }
 
 func (w *Witness) Run() {
-	// create table first
+	// 1. 创建表并获取最新状态
 	w.witnessModel.CreateBatchWitnessTable()
 	latestWitness, err := w.witnessModel.GetLatestBatchWitness()
 	var height int64
@@ -94,7 +95,7 @@ func (w *Witness) Run() {
 	w.currentBatchNumber = height
 	fmt.Println("latest height is ", height)
 
-	// tree version
+	// 2. 回滚树到正确版本
 	if w.accountTree.LatestVersion() > bsmt.Version(height+1) {
 		rollbackVersion := bsmt.Version(height + 1)
 		err = w.accountTree.Rollback(rollbackVersion)
@@ -110,10 +111,13 @@ func (w *Witness) Run() {
 		fmt.Println("normal starting...")
 	}
 
+	// 3. 填充账户数据
 	w.PaddingAccounts()
 
 	poseidonHasher := poseidon.NewPoseidon()
+	// 4. 启动写入协程
 	go w.WriteBatchWitnessToDB()
+
 	for k := range w.ops {
 		w.accountHashChan[k] = make([]chan []byte, utils.BatchCreateUserOpsCountsTiers[k])
 		for p := 0; p < utils.BatchCreateUserOpsCountsTiers[k]; p++ {
