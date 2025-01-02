@@ -8,22 +8,25 @@ import (
 	"github.com/consensys/gnark/std/rangecheck"
 )
 
+// BatchCreateUserCircuit 定义批量创建用户的电路结构
 type BatchCreateUserCircuit struct {
-	BatchCommitment           Variable `gnark:",public"`
-	BeforeAccountTreeRoot     Variable
-	AfterAccountTreeRoot      Variable
-	BeforeCEXAssetsCommitment Variable
-	AfterCEXAssetsCommitment  Variable
-	BeforeCexAssets           []CexAssetInfo
-	CreateUserOps             []CreateUserOperation
+	BatchCommitment           Variable              `gnark:",public"` // 批次承诺(公开输入)
+	BeforeAccountTreeRoot     Variable              // 操作前的账户树根
+	AfterAccountTreeRoot      Variable              // 操作后的账户树根
+	BeforeCEXAssetsCommitment Variable              // CEX资产承诺(操作前)
+	AfterCEXAssetsCommitment  Variable              // CEX资产承诺(操作后)
+	BeforeCexAssets           []CexAssetInfo        // CEX资产列表
+	CreateUserOps             []CreateUserOperation // 用户创建操作列表
 }
 
+// NewVerifyBatchCreateUserCircuit 创建新的验证电路实例
 func NewVerifyBatchCreateUserCircuit(commitment []byte) *BatchCreateUserCircuit {
 	var v BatchCreateUserCircuit
 	v.BatchCommitment = commitment
 	return &v
 }
 
+// NewBatchCreateUserCircuit 创建新的批处理电路实例
 func NewBatchCreateUserCircuit(userAssetCounts uint32, allAssetCounts uint32, batchCounts uint32) *BatchCreateUserCircuit {
 	var circuit BatchCreateUserCircuit
 	circuit.BatchCommitment = 0
@@ -95,46 +98,78 @@ func NewBatchCreateUserCircuit(userAssetCounts uint32, allAssetCounts uint32, ba
 	return &circuit
 }
 
+// Define 实现批量创建用户的电路约束逻辑
+// 主要验证步骤:
+// 1. 批次承诺验证
+// 2. CEX资产状态验证
+// 3. 用户资产验证
+// 4. Merkle树更新验证
+// 5. 状态转换验证
+// 6. 最终状态验证
 func (b BatchCreateUserCircuit) Define(api API) error {
-	// verify whether BatchCommitment is computed correctly
-	actualBatchCommitment := poseidon.Poseidon(api, b.BeforeAccountTreeRoot, b.AfterAccountTreeRoot, b.BeforeCEXAssetsCommitment, b.AfterCEXAssetsCommitment)
+	// 第1步: 验证批次承诺
+	// 使用Poseidon哈希验证批次承诺的正确性
+	actualBatchCommitment := poseidon.Poseidon(api,
+		b.BeforeAccountTreeRoot,     // 操作前账户树根
+		b.AfterAccountTreeRoot,      // 操作后账户树根
+		b.BeforeCEXAssetsCommitment, // 操作前CEX资产承诺
+		b.AfterCEXAssetsCommitment)  // 操作后CEX资产承诺
 	api.AssertIsEqual(b.BatchCommitment, actualBatchCommitment)
+
+	// 准备CEX资产验证
 	countOfCexAsset := getVariableCountOfCexAsset(b.BeforeCexAssets[0])
 	cexAssets := make([]Variable, len(b.BeforeCexAssets)*countOfCexAsset)
 	afterCexAssets := make([]CexAssetInfo, len(b.BeforeCexAssets))
 
+	// 初始化范围检查器
 	r := rangecheck.New(api)
-	// verify whether beforeCexAssetsCommitment is computed correctly
+
+	// 第2步: CEX资产状态验证
+	// 创建资产价格查找表
 	assetPriceTable := logderivlookup.New(api)
 	for i := 0; i < len(b.BeforeCexAssets); i++ {
-		r.Check(b.BeforeCexAssets[i].TotalEquity, 64)
-		r.Check(b.BeforeCexAssets[i].TotalDebt, 64)
-		r.Check(b.BeforeCexAssets[i].BasePrice, 64)
-		r.Check(b.BeforeCexAssets[i].LoanCollateral, 64)
-		r.Check(b.BeforeCexAssets[i].MarginCollateral, 64)
-		r.Check(b.BeforeCexAssets[i].PortfolioMarginCollateral, 64)
+		// 验证资产数量范围(64位)
+		r.Check(b.BeforeCexAssets[i].TotalEquity, 64)               // 总权益
+		r.Check(b.BeforeCexAssets[i].TotalDebt, 64)                 // 总债务
+		r.Check(b.BeforeCexAssets[i].BasePrice, 64)                 // 基础价格
+		r.Check(b.BeforeCexAssets[i].LoanCollateral, 64)            // 贷款抵押品
+		r.Check(b.BeforeCexAssets[i].MarginCollateral, 64)          // 保证金抵押品
+		r.Check(b.BeforeCexAssets[i].PortfolioMarginCollateral, 64) // 投资组合保证金
 
+		// 填充CEX资产承诺
 		fillCexAssetCommitment(api, b.BeforeCexAssets[i], i, cexAssets)
+
+		// 生成快速抵押品计算
 		generateRapidArithmeticForCollateral(api, r, b.BeforeCexAssets[i].LoanRatios)
 		generateRapidArithmeticForCollateral(api, r, b.BeforeCexAssets[i].MarginRatios)
 		generateRapidArithmeticForCollateral(api, r, b.BeforeCexAssets[i].PortfolioMarginRatios)
-		afterCexAssets[i] = b.BeforeCexAssets[i]
 
+		afterCexAssets[i] = b.BeforeCexAssets[i]
+		// 添加资产价格到查找表
 		assetPriceTable.Insert(b.BeforeCexAssets[i].BasePrice)
 	}
+
+	// 验证CEX资产承诺的正确性
 	actualCexAssetsCommitment := poseidon.Poseidon(api, cexAssets...)
 	api.AssertIsEqual(b.BeforeCEXAssetsCommitment, actualCexAssetsCommitment)
+
+	// 验证账户树根的连续性
 	api.AssertIsEqual(b.BeforeAccountTreeRoot, b.CreateUserOps[0].BeforeAccountTreeRoot)
 	api.AssertIsEqual(b.AfterAccountTreeRoot, b.CreateUserOps[len(b.CreateUserOps)-1].AfterAccountTreeRoot)
 
+	// 构建抵押品比率查找表
 	loanTierRatiosTable := constructLoanTierRatiosLookupTable(api, b.BeforeCexAssets)
 	marginTierRatiosTable := constructMarginTierRatiosLookupTable(api, b.BeforeCexAssets)
 	portfolioMarginTierRatiosTable := constructPortfolioTierRatiosLookupTable(api, b.BeforeCexAssets)
+
+	// 用于资产ID哈希的数组
 	userAssetIdHashes := make([]Variable, len(b.CreateUserOps)+1)
 
+	// 用于用户资产验证的数组
 	userAssetsResults := make([][]Variable, len(b.CreateUserOps))
 	userAssetsQueries := make([][]Variable, len(b.CreateUserOps))
 
+	// 第3步: 验证每个用户操作
 	for i := 0; i < len(b.CreateUserOps); i++ {
 		accountIndexHelper := accountIdToMerkleHelper(api, b.CreateUserOps[i].AccountIndex)
 		verifyMerkleProof(api, b.CreateUserOps[i].BeforeAccountTreeRoot, EmptyAccountLeafNodeHash, b.CreateUserOps[i].AccountProof[:], accountIndexHelper)
@@ -324,45 +359,64 @@ func copyTierRatios(dst []TierRatio, src []utils.TierRatio) {
 
 }
 
+// SetBatchCreateUserCircuitWitness 将见证数据转换为电路格式
+// 参数:
+//   - batchWitness: 批量创建用户的见证数据
+//
+// 返回:
+//   - witness: 转换后的电路见证数据
+//   - err: 错误信息
 func SetBatchCreateUserCircuitWitness(batchWitness *utils.BatchCreateUserWitness) (witness *BatchCreateUserCircuit, err error) {
+	// 初始化电路见证数据结构
 	witness = &BatchCreateUserCircuit{
-		BatchCommitment:           batchWitness.BatchCommitment,
-		BeforeAccountTreeRoot:     batchWitness.BeforeAccountTreeRoot,
-		AfterAccountTreeRoot:      batchWitness.AfterAccountTreeRoot,
-		BeforeCEXAssetsCommitment: batchWitness.BeforeCEXAssetsCommitment,
-		AfterCEXAssetsCommitment:  batchWitness.AfterCEXAssetsCommitment,
-		BeforeCexAssets:           make([]CexAssetInfo, len(batchWitness.BeforeCexAssets)),
-		CreateUserOps:             make([]CreateUserOperation, len(batchWitness.CreateUserOps)),
+		BatchCommitment:           batchWitness.BatchCommitment,                                 // 批次承诺
+		BeforeAccountTreeRoot:     batchWitness.BeforeAccountTreeRoot,                           // 操作前账户树根
+		AfterAccountTreeRoot:      batchWitness.AfterAccountTreeRoot,                            // 操作后账户树根
+		BeforeCEXAssetsCommitment: batchWitness.BeforeCEXAssetsCommitment,                       // CEX资产承诺(前)
+		AfterCEXAssetsCommitment:  batchWitness.AfterCEXAssetsCommitment,                        // CEX资产承诺(后)
+		BeforeCexAssets:           make([]CexAssetInfo, len(batchWitness.BeforeCexAssets)),      // CEX资产列表
+		CreateUserOps:             make([]CreateUserOperation, len(batchWitness.CreateUserOps)), // 用户创建操作列表
 	}
 
+	// 转换CEX资产数据
 	for i := 0; i < len(witness.BeforeCexAssets); i++ {
+		// 复制基本资产信息
 		witness.BeforeCexAssets[i].TotalEquity = batchWitness.BeforeCexAssets[i].TotalEquity
 		witness.BeforeCexAssets[i].TotalDebt = batchWitness.BeforeCexAssets[i].TotalDebt
 		witness.BeforeCexAssets[i].BasePrice = batchWitness.BeforeCexAssets[i].BasePrice
 		witness.BeforeCexAssets[i].LoanCollateral = batchWitness.BeforeCexAssets[i].LoanCollateral
 		witness.BeforeCexAssets[i].MarginCollateral = batchWitness.BeforeCexAssets[i].MarginCollateral
 		witness.BeforeCexAssets[i].PortfolioMarginCollateral = batchWitness.BeforeCexAssets[i].PortfolioMarginCollateral
+
+		// 复制抵押品比率配置
 		witness.BeforeCexAssets[i].LoanRatios = make([]TierRatio, len(batchWitness.BeforeCexAssets[i].LoanRatios))
 		copyTierRatios(witness.BeforeCexAssets[i].LoanRatios, batchWitness.BeforeCexAssets[i].LoanRatios[:])
+
 		witness.BeforeCexAssets[i].MarginRatios = make([]TierRatio, len(batchWitness.BeforeCexAssets[i].MarginRatios))
 		copyTierRatios(witness.BeforeCexAssets[i].MarginRatios, batchWitness.BeforeCexAssets[i].MarginRatios[:])
+
 		witness.BeforeCexAssets[i].PortfolioMarginRatios = make([]TierRatio, len(batchWitness.BeforeCexAssets[i].PortfolioMarginRatios))
 		copyTierRatios(witness.BeforeCexAssets[i].PortfolioMarginRatios, batchWitness.BeforeCexAssets[i].PortfolioMarginRatios[:])
 	}
 
+	// 获取CEX资产总数和目标资产数量
 	cexAssetsCount := len(witness.BeforeCexAssets)
-	// Decide the assets count for user according to the first user,
-	// because the assets count for all users in a batch are the same
-	// and the rest of the users in the batch may be padding accounts
+	// 根据第一个用户的非空资产数量确定目标数量
+	// 因为同一批次中所有用户的资产数量相同，其他用户可能是填充账户
 	targetCounts := utils.GetNonEmptyAssetsCountOfUser(batchWitness.CreateUserOps[0].Assets)
+
+	// 转换用户操作数据
 	for i := 0; i < len(witness.CreateUserOps); i++ {
+		// 复制账户树根
 		witness.CreateUserOps[i].BeforeAccountTreeRoot = batchWitness.CreateUserOps[i].BeforeAccountTreeRoot
 		witness.CreateUserOps[i].AfterAccountTreeRoot = batchWitness.CreateUserOps[i].AfterAccountTreeRoot
 		witness.CreateUserOps[i].AssetsForUpdateCex = make([]UserAssetMeta, cexAssetsCount)
 
+		// 收集现有资产的键
 		existingKeys := make([]int, 0)
 		for j := 0; j < len(batchWitness.CreateUserOps[i].Assets); j++ {
 			u := batchWitness.CreateUserOps[i].Assets[j]
+			// 转换用户资产元数据
 			userAsset := UserAssetMeta{
 				Equity:                    u.Equity,
 				Debt:                      u.Debt,
@@ -373,19 +427,26 @@ func SetBatchCreateUserCircuitWitness(batchWitness *utils.BatchCreateUserWitness
 
 			witness.CreateUserOps[i].AssetsForUpdateCex[j] = userAsset
 
+			// 收集非空资产的索引
 			if !utils.IsAssetEmpty(&u) {
 				existingKeys = append(existingKeys, int(u.Index))
 			}
 		}
+
+		// 计算需要填充的资产数量
 		paddingCounts := targetCounts - len(existingKeys)
 		witness.CreateUserOps[i].Assets = make([]UserAssetInfo, targetCounts)
 		currentPaddingCounts := 0
 		currentAssetIndex := 0
 		index := 0
+
+		// 填充资产数组
 		for _, v := range existingKeys {
+			// 在实际资产之间添加填充资产
 			if currentPaddingCounts < paddingCounts {
 				for k := currentAssetIndex; k < v; k++ {
 					currentPaddingCounts += 1
+					// 添加空资产
 					witness.CreateUserOps[i].Assets[index] = UserAssetInfo{
 						AssetIndex:                     uint32(k),
 						LoanCollateralIndex:            0,
@@ -401,13 +462,18 @@ func SetBatchCreateUserCircuitWitness(batchWitness *utils.BatchCreateUserWitness
 					}
 				}
 			}
+
+			// 添加实际资产
 			var uAssetInfo UserAssetInfo
 			uAssetInfo.AssetIndex = uint32(v)
+			// 计算并设置抵押品信息
 			calcAndSetCollateralInfo(v, &uAssetInfo, &batchWitness.CreateUserOps[i].Assets[v], batchWitness.BeforeCexAssets)
 			witness.CreateUserOps[i].Assets[index] = uAssetInfo
 			index += 1
 			currentAssetIndex = v + 1
 		}
+
+		// 填充剩余的空资产
 		for k := index; k < targetCounts; k++ {
 			witness.CreateUserOps[i].Assets[k] = UserAssetInfo{
 				AssetIndex:                     uint32(currentAssetIndex),
@@ -420,6 +486,8 @@ func SetBatchCreateUserCircuitWitness(batchWitness *utils.BatchCreateUserWitness
 			}
 			currentAssetIndex += 1
 		}
+
+		// 复制账户信息
 		witness.CreateUserOps[i].AccountIdHash = batchWitness.CreateUserOps[i].AccountIdHash
 		witness.CreateUserOps[i].AccountIndex = batchWitness.CreateUserOps[i].AccountIndex
 		for j := 0; j < len(witness.CreateUserOps[i].AccountProof); j++ {

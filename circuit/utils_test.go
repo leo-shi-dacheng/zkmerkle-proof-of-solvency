@@ -69,13 +69,18 @@ func (circuit MockCollateralCircuit) Define(api API) error {
 }
 
 func TestMockCollateralCircuit(t *testing.T) {
+	fmt.Println("========== 开始测试抵押品电路 ==========")
+	fmt.Println("1. 初始化电路...")
 	var circuit MockCollateralCircuit
 	circuit.CAssetInfo = make([]CexAssetInfo, 5)
 	for i := 0; i < len(circuit.CAssetInfo); i++ {
+		fmt.Printf("初始化资产 #%d 的比率数组...\n", i)
 		circuit.CAssetInfo[i].LoanRatios = make([]TierRatio, 10)
 		circuit.CAssetInfo[i].MarginRatios = make([]TierRatio, 10)
 		circuit.CAssetInfo[i].PortfolioMarginRatios = make([]TierRatio, 10)
 	}
+	fmt.Println("✅ 电路基础结构初始化完成")
+
 	circuit.AssetId = make([]int, 2)
 	circuit.UAssetInfo = make([]UserAssetInfo, 2)
 	circuit.UAssetMataInfo = make([]UserAssetMeta, 2)
@@ -83,17 +88,23 @@ func TestMockCollateralCircuit(t *testing.T) {
 	circuit.ExpectedMarginCollateral = make([]Variable, 2)
 	circuit.ExpectedPortfolioMarginCollateral = make([]Variable, 2)
 
+	fmt.Println("\n2. 注册整数除法提示...")
 	solver.RegisterHint(IntegerDivision)
+	fmt.Println("✅ 提示注册完成")
 
+	fmt.Println("\n3. 编译电路...")
 	oR1cs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit, frontend.IgnoreUnconstrainedInputs())
 	if err != nil {
+		fmt.Printf("❌ 电路编译失败: %s\n", err.Error())
 		t.Fatal(err)
 	}
-	fmt.Println("constraints number is ", oR1cs.GetNbConstraints())
+	fmt.Printf("✅ 电路编译成功，约束数量: %d\n", oR1cs.GetNbConstraints())
 
+	fmt.Println("\n4. 准备测试数据...")
 	var circuit2 MockCollateralCircuit
 	circuit2.CAssetInfo = make([]CexAssetInfo, 5)
 	for i := 0; i < len(circuit2.CAssetInfo); i++ {
+		fmt.Printf("配置资产 #%d 的基础信息...\n", i)
 		circuit2.CAssetInfo[i].TotalEquity = 0
 		circuit2.CAssetInfo[i].TotalDebt = 0
 		circuit2.CAssetInfo[i].BasePrice = 1
@@ -101,6 +112,7 @@ func TestMockCollateralCircuit(t *testing.T) {
 		circuit2.CAssetInfo[i].MarginCollateral = 0
 		circuit2.CAssetInfo[i].PortfolioMarginCollateral = 0
 
+		fmt.Printf("设置资产 #%d 的贷款比率...\n", i)
 		circuit2.CAssetInfo[i].LoanRatios = make([]TierRatio, 10)
 		for j := 0; j < 10; j++ {
 			circuit2.CAssetInfo[i].LoanRatios[j].BoundaryValue = 10000 * (j + 1)
@@ -109,6 +121,7 @@ func TestMockCollateralCircuit(t *testing.T) {
 			circuit2.CAssetInfo[i].LoanRatios[j].PrecomputedValue = 0
 		}
 
+		fmt.Printf("设置资产 #%d 的保证金比率...\n", i)
 		circuit2.CAssetInfo[i].MarginRatios = make([]TierRatio, 10)
 		for j := 0; j < 10; j++ {
 			circuit2.CAssetInfo[i].MarginRatios[j].BoundaryValue = 20001 * (j + 1)
@@ -117,6 +130,7 @@ func TestMockCollateralCircuit(t *testing.T) {
 			circuit2.CAssetInfo[i].MarginRatios[j].PrecomputedValue = 0
 		}
 
+		fmt.Printf("设置资产 #%d 的投资组合保证金比率...\n", i)
 		circuit2.CAssetInfo[i].PortfolioMarginRatios = make([]TierRatio, 10)
 		for j := 0; j < 10; j++ {
 			circuit2.CAssetInfo[i].PortfolioMarginRatios[j].BoundaryValue = 30000 * (j + 1)
@@ -125,7 +139,9 @@ func TestMockCollateralCircuit(t *testing.T) {
 			circuit2.CAssetInfo[i].PortfolioMarginRatios[j].PrecomputedValue = 0
 		}
 	}
+	fmt.Println("✅ 资产配置完成")
 
+	fmt.Println("\n5. 设置测试用例...")
 	circuit2.AssetId = []int{0, 1}
 	circuit2.UAssetInfo = make([]UserAssetInfo, 2)
 	circuit2.UAssetMataInfo = make([]UserAssetMeta, 2)
@@ -133,6 +149,7 @@ func TestMockCollateralCircuit(t *testing.T) {
 	circuit2.ExpectedLoanCollateral = make([]Variable, 2)
 	circuit2.ExpectedPortfolioMarginCollateral = make([]Variable, 2)
 
+	fmt.Println("配置第一个测试用例...")
 	circuit2.UAssetMataInfo[0].Equity = 0
 	circuit2.UAssetMataInfo[0].Debt = 0
 	circuit2.UAssetMataInfo[0].LoanCollateral = 9000
@@ -151,6 +168,7 @@ func TestMockCollateralCircuit(t *testing.T) {
 	circuit2.UAssetInfo[0].PortfolioMarginCollateralFlag = 1
 	circuit2.ExpectedPortfolioMarginCollateral[0] = 192000
 
+	fmt.Println("配置第二个测试用例...")
 	circuit2.UAssetMataInfo[1].Equity = 0
 	circuit2.UAssetMataInfo[1].Debt = 0
 	circuit2.UAssetMataInfo[1].LoanCollateral = 100001
@@ -169,30 +187,40 @@ func TestMockCollateralCircuit(t *testing.T) {
 	circuit2.UAssetInfo[1].PortfolioMarginCollateralFlag = 0
 	circuit2.ExpectedPortfolioMarginCollateral[1] = 154400
 
+	fmt.Println("\n6. 生成见证数据...")
 	witness, err := frontend.NewWitness(&circuit2, ecc.BN254.ScalarField())
 	if err != nil {
+		fmt.Printf("❌ 见证数据生成失败: %s\n", err.Error())
 		t.Fatal(err)
 	}
-	// err = oR1cs.IsSolved(witness)
-	// if err != nil {
-	// 	t.Fatal(err)
-	// }
+	fmt.Println("✅ 见证数据生成成功")
 
+	fmt.Println("\n7. 生成证明密钥...")
+	startTime := time.Now()
 	pk, vk, err := groth16.Setup(oR1cs)
 	if err != nil {
+		fmt.Printf("❌ 密钥生成失败: %s\n", err.Error())
 		panic(err)
 	} else {
 		fmt.Println("setup done")
 	}
+	fmt.Printf("✅ 密钥生成完成，耗时: %v\n", time.Since(startTime))
+
+	fmt.Println("\n8. 提取公共见证数据...")
 	publicWitness, err := witness.Public()
 	if err != nil {
+		fmt.Printf("❌ 公共见证数据提取失败: %s\n", err.Error())
 		panic(err)
 	} else {
 		fmt.Println("public witness")
 	}
-	startTime := time.Now()
+	fmt.Println("✅ 公共见证数据提取成功")
+
+	fmt.Println("\n9. 生成证明...")
+	startTime = time.Now()
 	proof, err := groth16.Prove(oR1cs, pk, witness)
 	if err != nil {
+		fmt.Printf("❌ 证明生成失败: %s\n", err.Error())
 		panic(err)
 	} else {
 		fmt.Println("proof")
@@ -201,10 +229,13 @@ func TestMockCollateralCircuit(t *testing.T) {
 	fmt.Println("prove time is ", endTime.Sub(startTime))
 	err = groth16.Verify(proof, vk, publicWitness)
 	if err != nil {
+		fmt.Printf("❌ 证明验证失败: %s\n", err.Error())
 		panic(err)
 	} else {
 		fmt.Println("verify")
 	}
+	fmt.Println("✅ 证明验证通过")
+	fmt.Println("========== 测试完成 ==========")
 }
 
 type MockCexAssetInfo struct {
@@ -280,15 +311,18 @@ func (circuit MockUserCircuit) Define(api API) error {
 }
 
 func TestMockUserCircuit(t *testing.T) {
-
+	fmt.Println("========== 开始测试用户电路 ==========")
+	fmt.Println("1. 初始化电路...")
 	var circuit MockUserCircuit
 	circuit.Assets = make([]MockUserAssetInfo, 350)
 	circuit.CexAssets = make([]MockCexAssetInfo, 350)
 	for i := 0; i < 350; i++ {
+		fmt.Printf("\r初始化资产 #%d/350...", i+1)
 		circuit.CexAssets[i].LoanRatios = make([]Variable, 30)
 		circuit.CexAssets[i].MarginRatios = make([]Variable, 30)
 		circuit.CexAssets[i].PortfolioMarginRatios = make([]Variable, 30)
 	}
+	fmt.Println("\n✅ 电路基础结构初始化完成")
 
 	oR1cs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit, frontend.IgnoreUnconstrainedInputs())
 	if err != nil {
@@ -446,6 +480,7 @@ func (circuit MockRandomLinearCombinationCircuit) Define(api API) error {
 }
 
 func TestMockRandomLinearCombinationCircuit(t *testing.T) {
+	fmt.Println("========== 开始测试随机线性组合电路 ==========")
 	var circuit MockRandomLinearCombinationCircuit
 	circuit.A = make([]frontend.Variable, 50)
 	circuit.ExpectedA = make([]frontend.Variable, 50*5)
@@ -493,4 +528,5 @@ func TestMockRandomLinearCombinationCircuit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fmt.Println("========== 测试完成 ==========")
 }

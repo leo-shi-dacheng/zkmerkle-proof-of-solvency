@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strconv"
 	"runtime"
+	"strconv"
 	"sync"
 
 	"github.com/binance/zkmerkle-proof-of-solvency/circuit"
@@ -23,6 +23,13 @@ import (
 	"github.com/gocarina/gocsv"
 )
 
+// LoadVerifyingKey 加载验证密钥
+// 参数:
+//   - vkFileName: 验证密钥文件名
+//
+// 返回:
+//   - groth16.VerifyingKey: 验证密钥
+//   - error: 错误信息
 func LoadVerifyingKey(vkFileName string) (groth16.VerifyingKey, error) {
 	vkFile, err := os.ReadFile(vkFileName)
 	if err != nil {
@@ -37,10 +44,55 @@ func LoadVerifyingKey(vkFileName string) (groth16.VerifyingKey, error) {
 	return vk, nil
 }
 
+// main 函数实现了两种验证模式:
+// 1. 用户证明验证模式(-user): 验证单个用户的资产证明
+//   - 验证用户的Merkle树证明
+//   - 验证用户资产承诺
+//   - 验证账户哈希值
+//
+// 2. 批量证明验证模式: 验证所有批次的证明
+//   - 验证每个批次的零知识证明
+//   - 验证CEX资产状态变化
+//   - 验证账户树根链
+//   - 验证最终状态一致性
+//
+// 工作流程:
+// 用户模式:
+//  1. 加载用户配置(user_config.json)
+//  2. 验证Merkle树根的有效性
+//  3. 解码并验证证明路径
+//  4. 计算用户资产承诺(使用Poseidon哈希)
+//  5. 计算并验证账户叶子节点哈希
+//  6. 执行Merkle证明验证
+//
+// 批量模式:
+//  1. 加载验证器配置(config.json)
+//  2. 读取并解析证明CSV文件
+//  3. 初始化验证状态:
+//     - 空账户树根
+//     - CEX资产初始状态
+//     - 验证密钥加载
+//  4. 多线程并行验证:
+//     - 验证每个批次的ZK证明
+//     - 验证公共输入的正确性
+//     - 验证状态转换的连续性
+//  5. 验证最终状态:
+//     - 验证最终CEX资产状态
+//     - 验证最终账户树根
+//
+// 安全特性:
+// - 密码学验证: 使用零知识证明和Merkle树
+// - 状态完整性: 验证状态转换链
+// - 并发安全: 使用线程安全的数据结构
+// - 错误处理: 严格的错误检查和panic处理
 func main() {
+	// 解析命令行参数
 	userFlag := flag.Bool("user", false, "flag which indicates user proof verification")
 	flag.Parse()
+
 	if *userFlag {
+		// 用户证明验证模式
+		// 1. 加载用户配置
 		userConfig := &config.UserConfig{}
 		content, err := ioutil.ReadFile("config/user_config.json")
 		if err != nil {
@@ -50,11 +102,14 @@ func main() {
 		if err != nil {
 			panic(err.Error())
 		}
+
+		// 2. 验证Merkle树根
 		root, err := hex.DecodeString(userConfig.Root)
 		if err != nil || len(root) != 32 {
 			panic("invalid account tree root")
 		}
 
+		// 3. 解码证明路径
 		var proof [][]byte
 		for i := 0; i < len(userConfig.Proof); i++ {
 			p, err := base64.StdEncoding.DecodeString(userConfig.Proof[i])
@@ -64,17 +119,24 @@ func main() {
 			proof = append(proof, p)
 		}
 
-		// padding user assets
+		// 4. 计算用户资产承诺
 		hasher := poseidon.NewPoseidon()
 		assetCommitment := utils.ComputeUserAssetsCommitment(&hasher, userConfig.Assets)
 		hasher.Reset()
-		// compute new account leaf node hash
+
+		// 5. 计算账户叶子节点哈希
 		accountIdHash, err := hex.DecodeString(userConfig.AccountIdHash)
 		if err != nil || len(accountIdHash) != 32 {
 			panic("the AccountIdHash is invalid")
 		}
-		accountHash := poseidon.PoseidonBytes(accountIdHash, userConfig.TotalEquity.Bytes(), userConfig.TotalDebt.Bytes(), userConfig.TotalCollateral.Bytes(), assetCommitment)
+		accountHash := poseidon.PoseidonBytes(accountIdHash,
+			userConfig.TotalEquity.Bytes(),
+			userConfig.TotalDebt.Bytes(),
+			userConfig.TotalCollateral.Bytes(),
+			assetCommitment)
 		fmt.Printf("merkle leave hash: %x\n", accountHash)
+
+		// 6. 验证Merkle证明
 		verifyFlag := utils.VerifyMerkleProof(root, userConfig.AccountIndex, proof, accountHash)
 		if verifyFlag {
 			fmt.Println("verify pass!!!")
@@ -82,6 +144,8 @@ func main() {
 			fmt.Println("verify failed...")
 		}
 	} else {
+		// 批量证明验证模式
+		// 1. 加载验证器配置
 		verifierConfig := &config.Config{}
 		content, err := ioutil.ReadFile("config/config.json")
 		if err != nil {
@@ -92,11 +156,14 @@ func main() {
 			panic(err.Error())
 		}
 
+		// 2. 读取证明文件
 		f, err := os.Open(verifierConfig.ProofTable)
 		if err != nil {
 			panic(err.Error())
 		}
 		defer f.Close()
+
+		// 3. 解析证明数据
 		// index 4: proof_info, index 5: cex_asset_list_commitments
 		// index 6: account_tree_roots, index 7: batch_commitment
 		// index 8: batch_number
@@ -120,6 +187,7 @@ func main() {
 			proofs[tmpProofs[i].BatchNumber] = *tmpProofs[i]
 		}
 
+		// 4. 初始化验证状态
 		prevCexAssetListCommitments := make([][]byte, 2)
 		prevAccountTreeRoots := make([][]byte, 2)
 		// depth-28 empty account tree root
@@ -153,14 +221,15 @@ func main() {
 		var finalCexAssetsInfoComm []byte
 		var accountTreeRoot []byte
 
+		// 5. 并行验证证明
 		workersNum := 16
 		if runtime.NumCPU() > workersNum {
 			workersNum = runtime.NumCPU()
 		}
 		averageProofCount := (len(proofs) + workersNum - 1) / workersNum
-		
+
 		type ProofMetaData struct {
-			accountTreeRoots [][]byte
+			accountTreeRoots        [][]byte
 			cexAssetListCommitments [][]byte
 		}
 		type SafeProofMap struct {
@@ -282,6 +351,7 @@ func main() {
 			finalCexAssetsInfoComm = proofData.cexAssetListCommitments[1]
 		}
 
+		// 6. 验证最终状态
 		if string(finalCexAssetsInfoComm) != string(expectFinalCexAssetsInfoComm) {
 			panic("Final Cex Assets Info Not Match")
 		}

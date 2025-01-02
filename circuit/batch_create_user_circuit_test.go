@@ -32,6 +32,11 @@ import (
 	"github.com/klauspost/compress/s2"
 )
 
+// ConstructR1csAndWitness - 构建R1CS约束系统和见证数据
+// 功能:
+// - 设置电路参数(资产数量、批次大小等)
+// - 编译电路生成约束系统
+// - 生成有效的见证数据
 func ConstructR1csAndWitness(provingSystem string) (constraint.ConstraintSystem, witness.Witness, error) {
 	solver.RegisterHint(IntegerDivision)
 	targetAssetCounts := 30
@@ -72,8 +77,11 @@ func ConstructR1csAndWitness(provingSystem string) (constraint.ConstraintSystem,
 	return oR1cs, witness, nil
 }
 
+// TestBatchCreateUserCircuit - 基础电路测试
 func TestBatchCreateUserCircuit(t *testing.T) {
 	oR1cs, witness, err := ConstructR1csAndWitness("groth16")
+	fmt.Println("TestBatchCreateUserCircuit: oR1cs", oR1cs)
+	fmt.Println("TestBatchCreateUserCircuit: witness", witness)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,16 +91,22 @@ func TestBatchCreateUserCircuit(t *testing.T) {
 	}
 }
 
+// TestBatchCreateUserCircuitFromKeySetup - 使用Groth16证明系统的完整流程测试
 func TestBatchCreateUserCircuitFromKeySetup(t *testing.T) {
 	oR1cs, witness, err := ConstructR1csAndWitness("groth16")
+	fmt.Println("TestBatchCreateUserCircuitFromKeySetup: oR1cs", oR1cs)
+	fmt.Println("TestBatchCreateUserCircuitFromKeySetup: witness", witness)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pk, vk, err := groth16.Setup(oR1cs)
+	fmt.Println("TestBatchCreateUserCircuitFromKeySetup: pk", pk)
+	fmt.Println("TestBatchCreateUserCircuitFromKeySetup: vk", vk)
 	if err != nil {
 		panic(err)
 	}
 	publicWitness, err := witness.Public()
+	fmt.Println("TestBatchCreateUserCircuitFromKeySetup: publicWitness", publicWitness)
 	if err != nil {
 		panic(err)
 	} else {
@@ -100,6 +114,7 @@ func TestBatchCreateUserCircuitFromKeySetup(t *testing.T) {
 	}
 	startTime := time.Now()
 	proof, err := groth16.Prove(oR1cs, pk, witness)
+	fmt.Println("TestBatchCreateUserCircuitFromKeySetup: proof", proof)
 	if err != nil {
 		panic(err)
 	} else {
@@ -115,20 +130,28 @@ func TestBatchCreateUserCircuitFromKeySetup(t *testing.T) {
 	}
 }
 
+// TestBatchCreateUserCircuitFromPlonkKeySetup - 使用Plonk证明系统的完整流程测试
 func TestBatchCreateUserCircuitFromPlonkKeySetup(t *testing.T) {
 	oScs, witness, err := ConstructR1csAndWitness("plonk")
+	fmt.Println("TestBatchCreateUserCircuitFromPlonkKeySetup: oScs", oScs)
+	fmt.Println("TestBatchCreateUserCircuitFromPlonkKeySetup: witness", witness)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srs, srsLang, err := unsafekzg.NewSRS(oScs)
+	fmt.Println("TestBatchCreateUserCircuitFromPlonkKeySetup: srs", srs)
+	fmt.Println("TestBatchCreateUserCircuitFromPlonkKeySetup: srsLang", srsLang)
 	if err != nil {
 		panic(err)
 	}
 	pk, vk, err := plonk.Setup(oScs, srs, srsLang)
+	fmt.Println("TestBatchCreateUserCircuitFromPlonkKeySetup: pk", pk)
+	fmt.Println("TestBatchCreateUserCircuitFromPlonkKeySetup: vk", vk)
 	if err != nil {
 		panic(err)
 	}
 	publicWitness, err := witness.Public()
+	fmt.Println("TestBatchCreateUserCircuitFromPlonkKeySetup: publicWitness", publicWitness)
 	if err != nil {
 		panic(err)
 	} else {
@@ -136,6 +159,7 @@ func TestBatchCreateUserCircuitFromPlonkKeySetup(t *testing.T) {
 	}
 	startTime := time.Now()
 	proof, err := plonk.Prove(oScs, pk, witness)
+	fmt.Println("TestBatchCreateUserCircuitFromPlonkKeySetup: proof", proof)
 	if err != nil {
 		panic(err)
 	} else {
@@ -151,18 +175,23 @@ func TestBatchCreateUserCircuitFromPlonkKeySetup(t *testing.T) {
 	}
 }
 
+// TestBatchCreateUserCircuitFromKeyFiles - 从文件加载密钥的测试
 func TestBatchCreateUserCircuitFromKeyFiles(t *testing.T) {
 	oR1cs, witness, err := ConstructR1csAndWitness("groth16")
+	fmt.Println("TestBatchCreateUserCircuitFromKeyFiles: oR1cs", oR1cs)
+	fmt.Println("TestBatchCreateUserCircuitFromKeyFiles: witness", witness)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := time.Now()
 	r1csFromFile, err := os.ReadFile("../src/keygen/zkpor50_1.r1cs")
+	fmt.Println("TestBatchCreateUserCircuitFromKeyFiles: r1csFromFile", r1csFromFile)
 	if err != nil {
 		panic(err)
 	}
 	buf := bytes.NewBuffer(r1csFromFile)
 	newR1CS := groth16.NewCS(ecc.BN254)
+	fmt.Println("TestBatchCreateUserCircuitFromKeyFiles: newR1CS", newR1CS)
 	_, _ = newR1CS.ReadFrom(buf)
 	et := time.Now()
 	fmt.Println("read r1cs time is ", et.Sub(s))
@@ -174,6 +203,7 @@ func TestBatchCreateUserCircuitFromKeyFiles(t *testing.T) {
 	}
 	buf = bytes.NewBuffer(pkFromFile)
 	pk := groth16.NewProvingKey(ecc.BN254)
+	fmt.Println("TestBatchCreateUserCircuitFromKeyFiles: pk", pk)
 	pk.UnsafeReadFrom(buf)
 	et = time.Now()
 	fmt.Println("read pk time is ", et.Sub(s))
@@ -185,6 +215,7 @@ func TestBatchCreateUserCircuitFromKeyFiles(t *testing.T) {
 	}
 	buf = bytes.NewBuffer(vkFromFile)
 	vk := groth16.NewVerifyingKey(ecc.BN254)
+	fmt.Println("TestBatchCreateUserCircuitFromKeyFiles: vk", vk)
 	_, _ = vk.ReadFrom(buf)
 	et = time.Now()
 	fmt.Println("read vk time is ", et.Sub(s))
@@ -197,6 +228,7 @@ func TestBatchCreateUserCircuitFromKeyFiles(t *testing.T) {
 	}
 	startTime := time.Now()
 	proof, err := groth16.Prove(oR1cs, pk, witness)
+	fmt.Println("TestBatchCreateUserCircuitFromKeyFiles: proof", proof)
 	if err != nil {
 		panic(err)
 	} else {
@@ -212,6 +244,7 @@ func TestBatchCreateUserCircuitFromKeyFiles(t *testing.T) {
 	}
 }
 
+// TestBatchCreateUserCircuitFromWitnessFile - 从见证文件生成证明的测试
 func TestBatchCreateUserCircuitFromWitnessFile(t *testing.T) {
 	targetAssetCounts := 30
 	totalAssetsCount := 500
@@ -224,8 +257,10 @@ func TestBatchCreateUserCircuitFromWitnessFile(t *testing.T) {
 		}
 	}
 	userCircuit := NewBatchCreateUserCircuit(uint32(targetCircuitAssetCounts), uint32(totalAssetsCount), uint32(userOpsPerBatch))
+	fmt.Println("TestBatchCreateUserCircuitFromWitnessFile: userCircuit", userCircuit)
 	s := time.Now()
 	oR1cs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, userCircuit, frontend.IgnoreUnconstrainedInputs())
+	fmt.Println("TestBatchCreateUserCircuitFromWitnessFile: oR1cs", oR1cs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,6 +272,7 @@ func TestBatchCreateUserCircuitFromWitnessFile(t *testing.T) {
 	userCircuit = ConstructBatchFromFile("witness.log")
 	solver.RegisterHint(IntegerDivision)
 	witness, e := frontend.NewWitness(userCircuit, ecc.BN254.ScalarField())
+	fmt.Println("TestBatchCreateUserCircuitFromWitnessFile: witness", witness)
 	if witness == nil {
 		t.Fatal(e)
 		t.Fatal("witness is nil")
@@ -246,12 +282,15 @@ func TestBatchCreateUserCircuitFromWitnessFile(t *testing.T) {
 	// 	t.Fatal(err)
 	// }
 	pk, vk, err := groth16.Setup(oR1cs)
+	fmt.Println("TestBatchCreateUserCircuitFromWitnessFile: pk", pk)
+	fmt.Println("TestBatchCreateUserCircuitFromWitnessFile: vk", vk)
 	if err != nil {
 		panic(err)
 	} else {
 		fmt.Println("setup done")
 	}
 	publicWitness, err := witness.Public()
+	fmt.Println("TestBatchCreateUserCircuitFromWitnessFile: publicWitness", publicWitness)
 	if err != nil {
 		panic(err)
 	} else {
@@ -259,6 +298,7 @@ func TestBatchCreateUserCircuitFromWitnessFile(t *testing.T) {
 	}
 	startTime := time.Now()
 	proof, err := groth16.Prove(oR1cs, pk, witness)
+	fmt.Println("TestBatchCreateUserCircuitFromWitnessFile: proof", proof)
 	if err != nil {
 		panic(err)
 	} else {
@@ -280,6 +320,7 @@ func ConstructBatchFromFile(fileName string) (witness *BatchCreateUserCircuit) {
 		panic(err.Error())
 	}
 	witnessData := make([]byte, hex.DecodedLen(len(witnessFile)))
+	fmt.Println("ConstructBatchFromFile: witnessData", witnessData)
 	n, err := hex.Decode(witnessData, witnessFile)
 	if err != nil {
 		panic(err.Error())
@@ -287,10 +328,18 @@ func ConstructBatchFromFile(fileName string) (witness *BatchCreateUserCircuit) {
 	witnessData = witnessData[:n]
 
 	witnessForCircuit := utils.DecodeBatchWitness(string(witnessData[:]))
+	fmt.Println("ConstructBatchFromFile: witnessForCircuit", witnessForCircuit)
 	circuitWitness, _ := SetBatchCreateUserCircuitWitness(witnessForCircuit)
+	fmt.Println("ConstructBatchFromFile: circuitWitness", circuitWitness)
 	return circuitWitness
 }
 
+// ConstructValidBatch - 生成有效的批处理数据
+// 功能:
+// - 创建账户树
+// - 生成CEX资产信息
+// - 构建用户账户和资产数据
+// - 计算所有必要的承诺和证明
 func ConstructValidBatch(assetsCount int, totalAssetsCount int, userOpsPerBatch int) (witness *BatchCreateUserCircuit) {
 	accountTree, err := utils.NewAccountTree("memory", "")
 	if err != nil {
