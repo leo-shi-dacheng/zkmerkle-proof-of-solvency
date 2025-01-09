@@ -10,7 +10,9 @@ import (
 
 // BatchCreateUserCircuit 定义批量创建用户的电路结构
 type BatchCreateUserCircuit struct {
-	BatchCommitment           Variable              `gnark:",public"` // 批次承诺(公开输入)
+	// 公开输入
+	BatchCommitment Variable `gnark:",public"` // 批次承诺(公开输入)
+	// 私有输入
 	BeforeAccountTreeRoot     Variable              // 操作前的账户树根
 	AfterAccountTreeRoot      Variable              // 操作后的账户树根
 	BeforeCEXAssetsCommitment Variable              // CEX资产承诺(操作前)

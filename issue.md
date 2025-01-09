@@ -36,7 +36,7 @@ func ComputeAssetsCommitmentForTest(userAssets []AccountAsset) []byte {
 }
 ```
 在这个例子中，Poseidon哈希用于：
-- 将用户的多个资产数据压缩成一个固定长度的哈希值
+- 将用户的多个资产数据压缩成一个固定长度的哈希值，构建 Merkle 树
 - 这个哈希值作为用户资产的"承诺"，可以用于后续的零知识证明
 
 # 2 稀疏Merkle树
